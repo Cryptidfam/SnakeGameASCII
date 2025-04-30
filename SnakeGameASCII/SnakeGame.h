@@ -6,60 +6,102 @@ using namespace std; // Use the standard namespace for convenience
 #include <deque> 
 #include <random>
 #include "ConsoleUtils.h"
-
-// The ConsoleUtils.h file is assumed to be in the same directory as this file
-// To do: 1. Let the main loop handle termination. 2. Let the map array initialize once.
+#include <string>
 
 class SnakeGame
 {
 private:
-    // Game data (previously globals)
-    struct Point {
+    struct Point { // This is a struct to represent a point in 2D space, for snake and food.
         int x, y;
     };
     // Game constants
     static const int width = 30;
     static const int height = 15;
+    char map[height][width]{};
     deque<Point> snake;
-    int foodX, foodY;
+	Point food; // Food position
     enum Direction {
-        STOP,
         UP,
         DOWN,
         LEFT,
         RIGHT
     };
     Direction dir;
+    enum GameState {
+        RUNNING,
+        PAUSED,
+        GAMEOVER,
+        WON,
+        QUIT
+    };
+    GameState state = RUNNING; // Game state
+    string statusMessage;
     int score;
 
 public:
     // Constructor
-    SnakeGame() : score(0), dir(STOP) // member initialization list 
-    {setup();}
+    SnakeGame() : score(0), dir(RIGHT) // member initialization list 
+    {
+        setup();
+    }
 
     // Game methods
     void setup() {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (x == 0 || x == width - 1 || y == 0 || y == height - 1) {
+                    map[y][x] = '#'; // Draw the borders
+                }
+                else {
+                    map[y][x] = ' '; // Fill the rest with spaces
+                }
+            }
+        }
+        snake.clear();
         Point start = { width / 2, height / 2 };
         snake.push_back(start);
-        generateFood();
+        map[start.y][start.x] = 'O';
+
         dir = RIGHT;
+        score = 0;
+
+		// Calculate the position that would be immediately eaten to avoid a weird first-frame "auto-eat" at the start of the game. 
+		// Simply using updateMap() before generating food, for some reason, did not work.
+        Point nextPosition = { start.x + 1, start.y }; // Based on RIGHT direction
+        generateFood();
+
+        // If food ended up at the next position, regenerate it
+        if (food.x == nextPosition.x && food.y == nextPosition.y) {
+            // Clear that position on the map first
+            map[food.y][food.x] = ' ';
+            generateFood(); // Try again
+        }
     }
 
     void generateFood() {
+        vector<Point> freeSpaces;
+		// Collect all free (playable) positions. This for loop being here bothers me. I should make a function for it.
+        for (int y = 1; y < height - 1; ++y) {
+            for (int x = 1; x < width - 1; ++x) {
+                if (map[y][x] == ' ') {
+                    freeSpaces.push_back({ x, y });
+                }
+            }
+        }
+        if (freeSpaces.empty()) {
+            return;
+        }
         static random_device rd;
         static mt19937 gen(rd());
-        static uniform_int_distribution<> disX(1, width - 2);
-        static uniform_int_distribution<> disY(1, height - 2);
-		do {
-			{
-				foodX = disX(gen);
-				foodY = disY(gen);
-			}
-		} while (std::any_of(snake.begin(), snake.end(), [this](const Point& p) { return p.x == foodX && p.y == foodY; }));
+		uniform_int_distribution<> dist(0, static_cast<int>(freeSpaces.size()) - 1); // Checks free space. 
+        Point pos = freeSpaces[dist(gen)];
+        food.x = pos.x;
+        food.y = pos.y;
+        map[food.y][food.x] = '*';
     }
 
-    // The input function both handles key presses and contains game logic (pausing), which violates separation of concerns.
-    bool input() {
+	// Input handling
+    void input() {
         if (_kbhit()) {
             char key = _getch();
             switch (key) {
@@ -67,59 +109,67 @@ public:
             case 's': if (dir != UP) dir = DOWN; break;
             case 'a': if (dir != RIGHT) dir = LEFT; break;
             case 'd': if (dir != LEFT) dir = RIGHT; break;
-			case 'p': // Pause the game
-                cout << "Game Paused. Press 'p' again to continue...\n";
-                while (_getch() != 'p'); // Keep reading keys until 'p' is pressed
-				break;
-            case 'q': return false; // Kind of useless because any key closes the game.
+			case 'r': setup(); break;
+            case 'p': state = PAUSED; break;
+            case 'q': state = QUIT; break;
             }
         }
-        return true; // Return true to continue the game loop
     }
 
-    // The draw() method creates a temporary 2D array in each call, maybe it would be better to update only changed cells?
-    void draw() {
-        char map[height][width]{};
-        ConsoleUtils::clearScreen(); // Clear the console screen
+    void draw() const {
+		ConsoleUtils::clearScreen(); // Move the cursor to the top left corner.
+
+        // Display map
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-				map[y][x] = ' '; // Draw empty space
-            }
-        }
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (x == 0 || x == width - 1 || y == 0 || y == height - 1) {
-					map[y][x] = '#'; // Draw the borders
-                }
-            }
-        }
-        map[foodY][foodX] = '*'; // Draw food
-        for (auto& s : snake) {
-            map[s.y][s.x] = 'O'; // Draw snake
-        }
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                cout << map[y][x];	// Print the map
+                cout << map[y][x];
             }
             cout << "\n";
         }
-        cout << "Score: " << score << "\n"; // Print the score
-        cout.flush(); // Flush the output buffer, to laymans, this means to make sure everything is printed to the console
-    }
 
-	bool isCollision(const Point& head)
-	{
+        // Score and controls
+        string scoreText = "Score: " + to_string(score);
+        cout << scoreText << string(20 - scoreText.length(), ' ') << "\n";
+        cout << "Controls: WASD to move, P to pause, R to restart, Q to quit\n";
+
+        // Display state-specific message if there is one
+        if (!statusMessage.empty()) {
+            cout << statusMessage << "\n";
+        }
+
+        cout.flush();
+    }
+    // Check for collision with wall or snake body
+    bool isCollision(const Point& head) const {
         if (head.x <= 0 || head.x >= width - 1 || head.y <= 0 || head.y >= height - 1) {
             return true;
         }
         for (size_t i = 1; i < snake.size(); ++i) {
-            if (snake[i].x == head.x && snake[i].y == head.y) return true;
+            if (head.x == snake[i].x && head.y == snake[i].y) {
+                return true;
+            }
+
         }
-		return false;
-	}
-    void logic()
-    {
+        return false; // No collision
+    }
+
+    void updateMap() {
+        for (int y = 1; y < height - 1; y++) { // Clear the map (except borders)
+            for (int x = 1; x < width - 1; x++) {
+                map[y][x] = ' ';
+            }
+        }
+		map[food.y][food.x] = '*'; // Place the food pieces.
+        for (size_t i = 1; i < snake.size(); i++) {
+            map[snake[i].y][snake[i].x] = 'o'; // Update the map with the snake's position.
+        }
+        if (!snake.empty()) {
+            map[snake.front().y][snake.front().x] = 'O'; // Place snake head
+        }
+    }
+    void logic() {
         Point head = snake.front();
+        // Calculate new head position
         switch (dir) {
         case UP:    head.y--; break;
         case DOWN:  head.y++; break;
@@ -127,29 +177,60 @@ public:
         case RIGHT: head.x++; break;
         default: break;
         }
-
         if (isCollision(head)) {
-            cout << "Game Over!\n";
-            exit(0);
+            state = GAMEOVER;
+            return;
         }
-        snake.push_front(head); // move head forward
-
-        if (head.x == foodX && head.y == foodY) 
-        {
-            score++;
-            generateFood(); // Generate new food
+        
+		bool ate = (head.x == food.x && head.y == food.y); // Detect if snake ate food
+        snake.push_front(head); // Move snake
+        if (ate) {
+			score++; // Increase score
+            generateFood();
         }
         else {
-            snake.pop_back(); // remove tail (last element from a vector) if not eating
+			snake.pop_back(); // Not eating food, remove tail
+        }
+		updateMap(); // Update the map with the new snake position
+        if (snake.size() >= static_cast<size_t>((width - 2) * (height - 2)))
+        {
+            state = WON;
+            return;
+        }
+    }
+    
+    // Needs a better name.
+    void showMessageAndWait(const string & message) {
+        statusMessage = message;
+        draw();
+        while (true) {
+            char key = _getch();
+            if (key == 'q') { state = QUIT; break; }
+			if (key == 'r') { setup(); state = RUNNING; statusMessage = string(50, ' '); break; } // At least messages get 'cleared' now.
         }
     }
     void run() {
         ConsoleUtils::hideCursor();
-        while (input()) {
-            draw();
-            logic();
-			Sleep(125);
+        state = RUNNING;
+        while (state != QUIT) {
+            input();
+            if (state == GAMEOVER) showMessageAndWait("Game over. Final score: " + to_string(score));
+            if (state == WON) showMessageAndWait("You win! Final score: " + to_string(score));
+            if (state == PAUSED) {
+                statusMessage = "Game paused. Press P to continue or Q to quit.";
+                draw();
+                while (true) {
+                    char key = _getch();
+                    if (key == 'p') { state = RUNNING; statusMessage = string(50, ' '); break; }
+                    if (key == 'q') { state = QUIT; break; }
+                }
+            }
+            if (state == RUNNING) {
+                logic();
+                draw();
+                Sleep(225); // Control the speed of the game
+            }
         }
     }
-};
 
+};

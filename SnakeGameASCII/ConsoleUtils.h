@@ -16,5 +16,6 @@ namespace ConsoleUtils {
         cursorInfo.bVisible = FALSE;
         SetConsoleCursorInfo(hOut, &cursorInfo);
     }
+
 }
 
